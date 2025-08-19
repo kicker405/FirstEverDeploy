@@ -250,6 +250,6 @@ setInterval(async () => {
 }, 1000);
 
 const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`Listening on http://localhost:${port}`);
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Server is running on port ${port}`);
 });
