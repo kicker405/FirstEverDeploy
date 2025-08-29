@@ -18,6 +18,10 @@ app.set("view engine", "njk");
 app.use(express.json());
 app.use(express.static("public"));
 app.use(cookieParser());
+app.use((err, req, res, next) => {
+  console.error("❌ Express Error:", err);
+  res.status(500).send("Internal Server Error");
+});
 app.use(bodyParser.urlencoded({ extended: false }));
 
 // ------------------ Аутентификация ------------------
@@ -86,11 +90,16 @@ app.get("/", auth(), (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  const user = await findUserByUsername(username);
-  if (!user || user.userPassword !== Number(password)) return res.redirect("/?authError=true");
-  const sessionId = await createSession(user.userId);
-  res.cookie("sessionId", sessionId, { httpOnly: true }).redirect("/");
+  try {
+    const { username, password } = req.body;
+    const user = await findUserByUsername(username);
+    if (!user || user.userPassword !== Number(password)) return res.redirect("/?authError=true");
+    const sessionId = await createSession(user.userId);
+    res.cookie("sessionId", sessionId, { httpOnly: true }).redirect("/");
+  } catch (err) {
+    console.error("Login Error:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 app.post("/signup", async (req, res) => {
@@ -190,3 +199,7 @@ setInterval(async () => {
 
 const port = process.env.PORT || 3000;
 server.listen(port, '0.0.0.0', () => console.log(`Server running on port ${port}`));
+
+DB.raw('SELECT 1')
+  .then(() => console.log('✅ DB OK'))
+  .catch(err => console.error('❌ DB Error:', err));
