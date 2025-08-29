@@ -1,57 +1,28 @@
-// This code for local
-import mysql from "mysql2"
-
+import pkg from 'pg';
+const { Pool } = pkg;
 import dotenv from 'dotenv';
-dotenv.config();
-
-const con = mysql.createConnection({
-    host:process.env.DB_HOST,
-    user:process.env.DB_USER,
-    password:process.env.DB_PASSWORD,
-    database:process.env.DB_DATABASE
-
-})
-
-con.connect(function(error){
-    if(error){
-        return console.log("Connection error");
-
-    }else{
-        return console.log("Coonected");
-
-    }
-})
-export default con;
-
-
-// This code for server
-import mysql from "mysql2";
-import dotenv from "dotenv";
 
 dotenv.config();
 
-const con = mysql.createConnection({
-  host: process.env.MYSQLHOST,
-  port: process.env.MYSQLPORT,
-  user: process.env.MYSQLUSER,
-  password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE,
+// Создаем пул соединений вместо одного подключения
+const pool = new Pool({
+  host: process.env.PGHOST,
+  port: process.env.PGPORT,
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-con.connect((error) => {
-  if (error) {
-    console.log("❌ Connection error:", error);
-  } else {
-    console.log("✅ Connected to the MySQL database!");
-  }
-});
-
-con.query('SHOW TABLES', (err, results) => {
+// Проверка подключения
+pool.connect((err, client, release) => {
   if (err) {
-    console.log('❌ Error:', err);
+    console.error('❌ Database connection error:', err);
   } else {
-    console.log('✅ Tables:', results);
+    console.log('✅ Connected to PostgreSQL database on Railway!');
+    release();
   }
 });
 
-export default con;
+// Для совместимости с вашим кодом, экспортируем pool
+export default pool;
