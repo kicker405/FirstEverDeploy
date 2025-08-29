@@ -23,7 +23,11 @@ app.use((err, req, res, next) => {
   res.status(500).send("Internal Server Error");
 });
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(express.static(__dirname + "/public"));
 
+app.get("/", (req, res) => {
+  res.sendFile(__dirname + "/public/index.html");
+});
 // ------------------ Аутентификация ------------------
 const findUserByUsername = async (username) => DB("users").where({ userName: username }).first();
 const findUserBySessionId = async (sessionId) => {
