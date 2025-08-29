@@ -1,5 +1,9 @@
-const knex = require("knex");
-const knexConfig = require("./knexfile");
-const db = knex(knexConfig.development);
+const knex = require('knex')({
+  client: 'pg',
+  connection: process.env.DATABASE_URL,
+  pool: {
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  }
+});
 
-module.exports = db;
+module.exports = knex;
