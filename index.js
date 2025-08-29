@@ -81,8 +81,37 @@ async function getActiveTimers(userId) {
 }
 
 // ------------------ Маршруты ------------------
-app.get("/", (req, res) => {
-  res.send("✅ Server is running");
+app.get("/", async (req, res) => {
+  try {
+    console.log("➡️ Route / hit");
+    const sessionId = req.cookies.sessionId;
+    console.log("Cookie sessionId:", sessionId);
+
+    if (!sessionId) {
+      console.log("No sessionId, sending index.html");
+      return res.sendFile(__dirname + "/public/index.html");
+    }
+
+    const session = await DB("sessions").where({ sessionId }).first();
+    console.log("Session from DB:", session);
+    if (!session) {
+      console.log("No session in DB, sending index.html");
+      return res.sendFile(__dirname + "/public/index.html");
+    }
+
+    const user = await DB("users").where({ userId: session.userId }).first();
+    console.log("User from DB:", user);
+    if (!user) {
+      console.log("No user in DB, sending index.html");
+      return res.sendFile(__dirname + "/public/index.html");
+    }
+
+    console.log("✅ User found, sending app.html");
+    res.sendFile(__dirname + "/public/app.html");
+  } catch (err) {
+    console.error("❌ Error in / route:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 app.post("/login", async (req, res) => {
