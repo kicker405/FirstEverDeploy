@@ -3,119 +3,80 @@ const nunjucks = require("nunjucks");
 const cookieParser = require("cookie-parser");
 const bodyParser = require("body-parser");
 const { nanoid } = require("nanoid");
-const app = express();
-const DB = require("./db");
 const http = require("http");
 const WebSocket = require("ws");
+const DB = require("./db");
+
+const app = express();
 
 nunjucks.configure("views", {
   autoescape: true,
   express: app,
-  tags: {
-    blockStart: "[%",
-    blockEnd: "%]",
-    variableStart: "[[",
-    variableEnd: "]]",
-    commentStart: "[#",
-    commentEnd: "#]",
-  },
 });
 
 app.set("view engine", "njk");
 app.use(express.json());
 app.use(express.static("public"));
 app.use(cookieParser());
+app.use(bodyParser.urlencoded({ extended: false }));
 
-//Подключение аутентификации...
-const findUserByUsername = async (username) => {
-  return DB("users").where({ userName: username }).first();
-};
-
+// ------------------ Аутентификация ------------------
+const findUserByUsername = async (username) => DB("users").where({ userName: username }).first();
 const findUserBySessionId = async (sessionId) => {
   const session = await DB("sessions").where({ sessionId }).first();
   if (!session) return null;
   return DB("users").where({ userId: session.userId }).first();
 };
-
 const createSession = async (userId) => {
-  console.log("Creating session with userId:", userId);
   const sessionId = nanoid();
-  userId = Number(userId);
-  if (isNaN(userId)) {
-    throw new Error("Invalid userId");
-  }
   await DB("sessions").insert({ sessionId, userId });
   return sessionId;
 };
-
-const deleteSession = async (sessionId) => {
-  await DB("sessions").where({ sessionId }).del();
-};
+const deleteSession = async (sessionId) => DB("sessions").where({ sessionId }).del();
 
 const auth = () => async (req, res, next) => {
-  if (!req.cookies["sessionId"]) return next();
-
+  if (!req.cookies.sessionId) return next();
   try {
-    const user = await findUserBySessionId(req.cookies["sessionId"]);
+    const user = await findUserBySessionId(req.cookies.sessionId);
     if (!user) {
       res.clearCookie("sessionId");
       return next();
     }
-
     req.user = user;
-    req.sessionId = req.cookies["sessionId"];
+    req.sessionId = req.cookies.sessionId;
     next();
-  } catch (error) {
-    console.error("Auth error:", error);
+  } catch (err) {
+    console.error("Auth error:", err);
     next();
   }
 };
 
-//API
+// ------------------ Таймеры ------------------
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+}
+
 async function getAllTimers(userId) {
   const timers = await DB("timer")
-    .select(
-      "timerId",
-      "timerDescription",
-      "isActive",
-      "timerStart",
-      "timerEnd",
-      "timerProcess",
-      "duration",
-      "userId"
-    )
+    .select("*")
     .where({ userId })
     .orderBy("timerStart", "desc");
-
-  // Приводим isActive к JS boolean
-  return timers.map(t => ({
-    ...t,
-    isActive: !!t.isActive
-  }));
+  return timers.map(t => ({ ...t, isActive: !!t.isActive }));
 }
 
 async function getActiveTimers(userId) {
   const now = Date.now();
   const timers = await DB("timer")
-    .select(
-      "timerId",
-      "timerDescription",
-      "isActive",
-      "timerStart",
-      "timerEnd",
-      "timerProcess",
-      "duration",
-      "userId"
-    )
+    .select("*")
     .where({ userId, isActive: true });
-
-  return timers.map(t => ({
-    ...t,
-    isActive: !!t.isActive,
-    progress: formatDuration(now - new Date(t.timerStart).getTime())
-  }));
+  return timers.map(t => ({ ...t, isActive: !!t.isActive, progress: formatDuration(now - new Date(t.timerStart).getTime()) }));
 }
 
+// ------------------ Маршруты ------------------
 app.get("/", auth(), (req, res) => {
   res.render("index", {
     user: req.user,
@@ -124,100 +85,33 @@ app.get("/", auth(), (req, res) => {
   });
 });
 
-app.post("/login", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   const user = await findUserByUsername(username);
-  if (!user || user.userPassword !== Number(password)) {
-    return res.redirect("/?authError=true");
-  }
+  if (!user || user.userPassword !== Number(password)) return res.redirect("/?authError=true");
   const sessionId = await createSession(user.userId);
   res.cookie("sessionId", sessionId, { httpOnly: true }).redirect("/");
 });
 
-app.post("/signup", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+app.post("/signup", async (req, res) => {
   const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).send("Username and password are required");
-  }
-
+  if (!username || !password) return res.status(400).send("Username and password required");
   const existingUser = await findUserByUsername(username);
-  if (existingUser) {
-    return res.status(400).send("Пользователь с таким именем уже существует");
-  }
-
-  try {
-    const [result] = await DB("users")
-      .insert({
-        userName: username,
-        userPassword: Number(password),
-      })
-      .returning("userId");
-
-    const newUserId = result.userId;
-    const sessionId = await createSession(newUserId);
-
-    res.cookie("sessionId", sessionId, { httpOnly: true }).redirect("/");
-  } catch (error) {
-    console.error(error);
-    res.status(500).send("Internal server error");
-  }
-});
-
-app.get("/signup", (req, res) => {
-  res.render("signup", {
-    authError: req.query.authError === "true",
-  });
+  if (existingUser) return res.status(400).send("User exists");
+  const [result] = await DB("users").insert({ userName: username, userPassword: Number(password) }).returning("*");
+  const sessionId = await createSession(result.userId);
+  res.cookie("sessionId", sessionId, { httpOnly: true }).redirect("/");
 });
 
 app.get("/logout", async (req, res) => {
-  const sessionId = req.cookies["sessionId"];
-  if (sessionId) {
-    await deleteSession(sessionId);
-    res.clearCookie("sessionId");
-  }
-  res.redirect("/?authError=false");
+  const sessionId = req.cookies.sessionId;
+  if (sessionId) await deleteSession(sessionId);
+  res.clearCookie("sessionId").redirect("/");
 });
 
-//Timers functions
-function formatDuration(milliseconds) {
-  const totalSeconds = Math.floor(milliseconds / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-app.post("/api/timers/:id/stop", async (req, res) => {
-  const id = req.params.id;
-  const now = new Date();
-
-  try {
-    const timer = await DB("timer").where({ timerId: id, isActive: true }).first();
-    if (!timer) {
-      return res.status(404).json({ error: "Timer not found or already stopped" });
-    }
-
-    await DB("timer")
-      .where({ timerId: id })
-      .update({
-        timerEnd: now,
-        duration: formatDuration(now - new Date(timer.timerStart).getTime()),
-        isActive: false,
-      });
-
-    broadcastAllTimers(timer.userId);
-    res.status(200).json({ message: "Timer stopped", id: timer.timerId });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
+// ------------------ API Таймеров ------------------
 app.post("/api/timers", auth(), async (req, res) => {
   const { description } = req.body;
-
   const newTimer = {
     timerId: nanoid(),
     timerDescription: description,
@@ -225,39 +119,31 @@ app.post("/api/timers", auth(), async (req, res) => {
     timerEnd: null,
     timerProcess: null,
     isActive: true,
-    userId: req.user.userId,
-    duration: null
+    duration: null,
+    userId: req.user.userId
   };
-
-  try {
-    // Используем returning с явными полями, приводим isActive к boolean
-    const [createdTimer] = await DB("timer")
-      .insert(newTimer)
-      .returning([
-        "timerId",
-        "timerDescription",
-        "isActive",
-        "timerStart",
-        "timerEnd",
-        "timerProcess",
-        "duration",
-        "userId"
-      ]);
-
-    createdTimer.isActive = !!createdTimer.isActive;
-
-    broadcastAllTimers(req.user.userId);
-    res.status(201).json(createdTimer);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Internal server error" });
-  }
+  const [createdTimer] = await DB("timer").insert(newTimer).returning("*");
+  broadcastAllTimers(req.user.userId);
+  res.status(201).json({ ...createdTimer, isActive: !!createdTimer.isActive });
 });
 
-//Websocket
+app.post("/api/timers/:id/stop", async (req, res) => {
+  const id = req.params.id;
+  const now = new Date();
+  const timer = await DB("timer").where({ timerId: id, isActive: true }).first();
+  if (!timer) return res.status(404).json({ error: "Not found" });
+  await DB("timer").where({ timerId: id }).update({
+    timerEnd: now,
+    duration: formatDuration(now - new Date(timer.timerStart).getTime()),
+    isActive: false
+  });
+  broadcastAllTimers(timer.userId);
+  res.json({ message: "Stopped", id: timer.timerId });
+});
+
+// ------------------ WebSocket ------------------
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-
 const clients = new Map();
 
 wss.on("connection", async (ws, req) => {
@@ -265,7 +151,6 @@ wss.on("connection", async (ws, req) => {
     const params = new URLSearchParams(req.url.replace(/^.*\?/, ""));
     const sessionId = params.get("sessionId");
     if (!sessionId) return ws.close();
-
     const user = await findUserBySessionId(sessionId);
     if (!user) return ws.close();
 
@@ -278,25 +163,17 @@ wss.on("connection", async (ws, req) => {
       if (clients.get(uid).size === 0) clients.delete(uid);
     });
 
-    // Отправка всех таймеров при подключении
     const allTimers = await getAllTimers(uid);
     ws.send(JSON.stringify({ type: "all_timers", timers: allTimers }));
   } catch (err) {
-    console.error("WS connection error:", err);
+    console.error("WS error:", err);
     ws.close();
   }
 });
 
 async function broadcastAllTimers(userId) {
   if (!clients.has(userId)) return;
-
-  const allTimersRaw = await getAllTimers(userId);
-
-  const allTimers = allTimersRaw.map(t => ({
-    ...t,
-    isActive: !!t.isActive
-  }));
-
+  const allTimers = await getAllTimers(userId);
   for (const ws of clients.get(userId)) {
     ws.send(JSON.stringify({ type: "all_timers", timers: allTimers }));
   }
@@ -304,12 +181,7 @@ async function broadcastAllTimers(userId) {
 
 setInterval(async () => {
   for (const [uid, sockets] of clients.entries()) {
-    const activeTimersRaw = await getActiveTimers(uid);
-    const activeTimers = activeTimersRaw.map(t => ({
-      ...t,
-      isActive: !!t.isActive
-    }));
-
+    const activeTimers = await getActiveTimers(uid);
     for (const ws of sockets) {
       ws.send(JSON.stringify({ type: "active_timers", timers: activeTimers }));
     }
@@ -317,6 +189,4 @@ setInterval(async () => {
 }, 1000);
 
 const port = process.env.PORT || 3000;
-server.listen(port, '0.0.0.0', () => {
-  console.log(`Server is running on port ${port}`);
-});
+server.listen(port, '0.0.0.0', () => console.log(`Server running on port ${port}`));
