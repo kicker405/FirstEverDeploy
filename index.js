@@ -73,15 +73,46 @@ const auth = () => async (req, res, next) => {
 
 //API
 async function getAllTimers(userId) {
-  return DB("timer").where({ userId }).orderBy("timerStart", "desc");
+  const timers = await DB("timer")
+    .select(
+      "timerId",
+      "timerDescription",
+      "isActive",
+      "timerStart",
+      "timerEnd",
+      "timerProcess",
+      "duration",
+      "userId"
+    )
+    .where({ userId })
+    .orderBy("timerStart", "desc");
+
+  // Приводим isActive к JS boolean
+  return timers.map(t => ({
+    ...t,
+    isActive: !!t.isActive
+  }));
 }
 
 async function getActiveTimers(userId) {
   const now = Date.now();
-  let timers = await DB("timer").where({ userId, isActive: true });
-  return timers.map((t) => ({
+  const timers = await DB("timer")
+    .select(
+      "timerId",
+      "timerDescription",
+      "isActive",
+      "timerStart",
+      "timerEnd",
+      "timerProcess",
+      "duration",
+      "userId"
+    )
+    .where({ userId, isActive: true });
+
+  return timers.map(t => ({
     ...t,
-    progress: formatDuration(now - new Date(t.timerStart).getTime()),
+    isActive: !!t.isActive,
+    progress: formatDuration(now - new Date(t.timerStart).getTime())
   }));
 }
 
@@ -191,12 +222,30 @@ app.post("/api/timers", auth(), async (req, res) => {
     timerId: nanoid(),
     timerDescription: description,
     timerStart: new Date(),
+    timerEnd: null,
+    timerProcess: null,
     isActive: true,
     userId: req.user.userId,
+    duration: null
   };
 
   try {
-    const [createdTimer] = await DB("timer").insert(newTimer).returning("*");
+    // Используем returning с явными полями, приводим isActive к boolean
+    const [createdTimer] = await DB("timer")
+      .insert(newTimer)
+      .returning([
+        "timerId",
+        "timerDescription",
+        "isActive",
+        "timerStart",
+        "timerEnd",
+        "timerProcess",
+        "duration",
+        "userId"
+      ]);
+
+    createdTimer.isActive = !!createdTimer.isActive;
+
     broadcastAllTimers(req.user.userId);
     res.status(201).json(createdTimer);
   } catch (error) {
@@ -212,29 +261,42 @@ const wss = new WebSocket.Server({ server });
 const clients = new Map();
 
 wss.on("connection", async (ws, req) => {
-  const params = new URLSearchParams(req.url.replace(/^.*\?/, ""));
-  const sessionId = params.get("sessionId");
-  if (!sessionId) return ws.close();
+  try {
+    const params = new URLSearchParams(req.url.replace(/^.*\?/, ""));
+    const sessionId = params.get("sessionId");
+    if (!sessionId) return ws.close();
 
-  const user = await findUserBySessionId(sessionId);
-  if (!user) return ws.close();
+    const user = await findUserBySessionId(sessionId);
+    if (!user) return ws.close();
 
-  const uid = user.userId;
-  if (!clients.has(uid)) clients.set(uid, new Set());
-  clients.get(uid).add(ws);
+    const uid = user.userId;
+    if (!clients.has(uid)) clients.set(uid, new Set());
+    clients.get(uid).add(ws);
 
-  ws.on("close", () => {
-    clients.get(uid).delete(ws);
-    if (clients.get(uid).size === 0) clients.delete(uid);
-  });
+    ws.on("close", () => {
+      clients.get(uid).delete(ws);
+      if (clients.get(uid).size === 0) clients.delete(uid);
+    });
 
-  const allTimers = await getAllTimers(uid);
-  ws.send(JSON.stringify({ type: "all_timers", timers: allTimers }));
+    // Отправка всех таймеров при подключении
+    const allTimers = await getAllTimers(uid);
+    ws.send(JSON.stringify({ type: "all_timers", timers: allTimers }));
+  } catch (err) {
+    console.error("WS connection error:", err);
+    ws.close();
+  }
 });
 
 async function broadcastAllTimers(userId) {
   if (!clients.has(userId)) return;
-  const allTimers = await getAllTimers(userId);
+
+  const allTimersRaw = await getAllTimers(userId);
+
+  const allTimers = allTimersRaw.map(t => ({
+    ...t,
+    isActive: !!t.isActive
+  }));
+
   for (const ws of clients.get(userId)) {
     ws.send(JSON.stringify({ type: "all_timers", timers: allTimers }));
   }
@@ -242,9 +304,14 @@ async function broadcastAllTimers(userId) {
 
 setInterval(async () => {
   for (const [uid, sockets] of clients.entries()) {
-    const active = await getActiveTimers(uid);
+    const activeTimersRaw = await getActiveTimers(uid);
+    const activeTimers = activeTimersRaw.map(t => ({
+      ...t,
+      isActive: !!t.isActive
+    }));
+
     for (const ws of sockets) {
-      ws.send(JSON.stringify({ type: "active_timers", timers: active }));
+      ws.send(JSON.stringify({ type: "active_timers", timers: activeTimers }));
     }
   }
 }, 1000);
