@@ -81,12 +81,8 @@ async function getActiveTimers(userId) {
 }
 
 // ------------------ Маршруты ------------------
-app.get("/", auth(), (req, res) => {
-  res.render("index", {
-    user: req.user,
-    sessionId: req.sessionId,
-    authError: req.query.authError === "true",
-  });
+app.get("/", (req, res) => {
+  res.send("✅ Server is running");
 });
 
 app.post("/login", async (req, res) => {
