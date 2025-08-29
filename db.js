@@ -9,8 +9,9 @@ const DB = knex({
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
     database: process.env.PGDATABASE,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  }
+    ssl: { rejectUnauthorized: false }
+  },
+  pool: { min: 0, max: 5 } 
 });
 
 // Проверка подключения
