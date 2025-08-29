@@ -1,10 +1,8 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import { Pool } from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Создаем пул соединений вместо одного подключения
 const pool = new Pool({
   host: process.env.PGHOST,
   port: process.env.PGPORT,
@@ -14,15 +12,4 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Проверка подключения
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error('❌ Database connection error:', err);
-  } else {
-    console.log('✅ Connected to PostgreSQL database on Railway!');
-    release();
-  }
-});
-
-// Для совместимости с вашим кодом, экспортируем pool
 export default pool;
